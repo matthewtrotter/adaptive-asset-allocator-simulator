@@ -16,6 +16,9 @@ class Subportfolio(object):
         self.rebalance_dates = rebalance_dates
 
         self.target_weights = self.set_target_weights()
+        self.returns = self.calculate_performance()
+
+        self.expected_return(self.returns.index[3000], 3, 3, 365*2)
 
         # Print status
         if id % 10 == 0 and id > 0:
@@ -25,7 +28,8 @@ class Subportfolio(object):
         """Set the target weights on all rebalance dates
         """
         tickers = self.au.tickers(include_cash=False, include_borrow_rate=False)
-        target_weights = self.au.prices(tickers=tickers).copy(deep=True)*0     # Reset to 0
+        target_weights = self.au.prices(tickers=tickers).copy(deep=True)*0
+        target_weights = target_weights.replace(0, np.NaN)
         earliest_rebalance = self.au.prices(tickers=tickers).index[self.lookback + 1]
         for date_window_end in self.rebalance_dates:
             if date_window_end > earliest_rebalance:
@@ -36,7 +40,8 @@ class Subportfolio(object):
                     date_window_start, 
                     date_window_end
                 )
-
+        target_weights = target_weights.ffill()
+        target_weights = target_weights.fillna(0)
         return target_weights
 
     def optimize_target_weights(self, assets: List, date_window_start, date_window_end):
@@ -87,7 +92,44 @@ class Subportfolio(object):
         num_keep = int(np.ceil(max(self.subportfolio_threshold*len(tickers), self.subportfolio_min_keep)))
         return metric[-num_keep:].index.to_list()
 
+    def calculate_performance(self):
+        """Calculate the daily returns of this subportfolio.
+        """
+        tickers = self.au.tickers(include_cash=False, include_borrow_rate=False)
+        au_returns = self.au.returns(tickers=tickers)
+        tw = self.target_weights[1:]
+        return (tw*au_returns).sum(axis=1)
 
+    def expected_return(self, date, lookback:int, lookforward:int, max_lookback:int) -> float:
+        """Calculate the expected daily return of the subportfolio on the date based on previous statistics.
+
+        Parameters
+        ----------
+        date : 
+            Date of estimate
+        lookback : int
+            Calculate the historical return input over this many previous days
+        lookforward : int
+            Calculate the expected daily return over this many future days
+        max_lookback : int
+            Total days to include in estimation model
+
+        Returns
+        -------
+        float
+            Expected daily return of the subportfolio
+        """
+        # Calculate histogram of future daily average return vs. past average return
+        date_window_start = date - np.timedelta64(int(7.4*max_lookback/5), 'D')
+        r = 1 + self.returns[date_window_start:date]
+        past_total_returns = r.rolling(lookback, closed='left').apply(np.prod) - 1
+        future_total_returns = r.rolling(lookforward).apply(np.prod).shift(-lookforward+1) - 1
+
+        # Estimate a linear regression model
+        pass
+
+        
+        # Calculate expected daily return
 
 class FixedAllocationSubportfolio(Subportfolio):
     def __init__(self, percentage_allocations: List, au: AssetUniverse, assets: pd.DataFrame, rebalance_dates: pd.DatetimeIndex):
